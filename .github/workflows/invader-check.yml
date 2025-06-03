@@ -15,17 +15,17 @@ jobs:
       - name: Fetch website content
         id: fetch_content
         run: |
-          content=$(curl -s https://www.space-invaders.com/world/)
-          echo "web_content<<EOF" >> $GITHUB_OUTPUT
-          echo "$content" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          content_file=$(mktemp web_content.XXXXXX.html)
+          curl -s https://www.space-invaders.com/world/ > "$content_file"
+          echo "content_file_path=$content_file" >> $GITHUB_OUTPUT
 
       - name: Extract invader count
         id: extract_count
         run: |
-          web_content="${{ steps.fetch_content.outputs.web_content }}"
-          
-          # Pre-process the HTML: remove newlines, then squeeze multiple spaces into one
+          web_content_path="${{ steps.fetch_content.outputs.content_file_path }}"
+          web_content=$(cat "$web_content_path") # Read content from the file
+
+          # Pre-process the HTML: remove newlines, then squeeze multiple spaces
           # Focus on the part of HTML that contains the score
           score_section=$(echo "$web_content" | grep -o '<div class="score">.*Invaders.*</div>' || true)
           
@@ -94,3 +94,9 @@ jobs:
           else
             echo "Invader count has not changed. Current count: ${{ steps.extract_count.outputs.current_invaders }}."
           fi
+
+      - name: Clean up temporary web content file
+        if: always() # Ensure this step runs even if previous steps fail
+        run: |
+          echo "Cleaning up temporary file: ${{ steps.fetch_content.outputs.content_file_path }}"
+          rm -f "${{ steps.fetch_content.outputs.content_file_path }}"
