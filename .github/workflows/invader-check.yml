@@ -22,8 +22,13 @@ jobs:
         id: extract_count
         run: |
           web_content="${{ steps.fetch_content.outputs.web_content }}"
-          invader_text=$(echo "$web_content" | grep -oP '<div class="score">\s*<span>\s*\K[0-9,]+(?=\s*Invaders)')
-          invader_count=$(echo "$invader_text" | sed 's/,//g') # Remove commas for comparison
+          invader_text=$(echo "$web_content" | grep -oP '<div class="score">\s*<span>\s*\K[0-9,]+(?=\s*Invaders)' || true)
+          if [ -z "$invader_text" ]; then
+            echo "Invader count not found on page."
+            invader_count="error_not_found" # Special value to indicate not found
+          else
+            invader_count=$(echo "$invader_text" | sed 's/,//g')
+          fi
           echo "Current invader count: $invader_count"
           echo "::set-output name=current_invaders::$invader_count"
 
@@ -39,19 +44,24 @@ jobs:
           echo "::set-output name=previous_invaders::$previous_invaders"
 
       - name: Compare counts and notify
-        if: steps.extract_count.outputs.current_invaders != steps.read_previous_count.outputs.previous_invaders
+        if: steps.extract_count.outputs.current_invaders != steps.read_previous_count.outputs.previous_invaders && steps.extract_count.outputs.current_invaders != 'error_not_found'
         run: |
           echo "Invader count has changed!"
+          # Send notification only if current_invaders is a number
           curl -d "New invader count: ${{ steps.extract_count.outputs.current_invaders }}" ntfy.sh/invader_alert
           echo "${{ steps.extract_count.outputs.current_invaders }}" > invader_count.txt
-
+          
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
           git add invader_count.txt
           git commit -m "Update invader count to ${{ steps.extract_count.outputs.current_invaders }}" || echo "No changes to commit"
           git push || echo "No changes to push"
-
-      - name: Counts are the same
-        if: steps.extract_count.outputs.current_invaders == steps.read_previous_count.outputs.previous_invaders
+          
+      - name: Counts are the same or count not found
+        if: steps.extract_count.outputs.current_invaders == steps.read_previous_count.outputs.previous_invaders || steps.extract_count.outputs.current_invaders == 'error_not_found'
         run: |
-          echo "Invader count has not changed."
+          if [ "${{ steps.extract_count.outputs.current_invaders }}" == "error_not_found" ]; then
+            echo "Could not extract current invader count. Previous count was ${{ steps.read_previous_count.outputs.previous_invaders }}."
+          else
+            echo "Invader count has not changed. Current count: ${{ steps.extract_count.outputs.current_invaders }}."
+          fi
