@@ -1,0 +1,57 @@
+name: Invader Check
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run every hour
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  check_invaders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Fetch website content
+        id: fetch_content
+        run: |
+          content=$(curl -s https://www.space-invaders.com/world/)
+          echo "::set-output name=web_content::$content"
+
+      - name: Extract invader count
+        id: extract_count
+        run: |
+          web_content="${{ steps.fetch_content.outputs.web_content }}"
+          invader_text=$(echo "$web_content" | grep -oP '<div class="score">\s*<span>\s*\K[0-9,]+(?=\s*Invaders)')
+          invader_count=$(echo "$invader_text" | sed 's/,//g') # Remove commas for comparison
+          echo "Current invader count: $invader_count"
+          echo "::set-output name=current_invaders::$invader_count"
+
+      - name: Read previous invader count
+        id: read_previous_count
+        run: |
+          if [ -f invader_count.txt ]; then
+            previous_invaders=$(cat invader_count.txt)
+          else
+            previous_invaders="0" # Default if file doesn't exist
+          fi
+          echo "Previous invader count: $previous_invaders"
+          echo "::set-output name=previous_invaders::$previous_invaders"
+
+      - name: Compare counts and notify
+        if: steps.extract_count.outputs.current_invaders != steps.read_previous_count.outputs.previous_invaders
+        run: |
+          echo "Invader count has changed!"
+          curl -d "New invader count: ${{ steps.extract_count.outputs.current_invaders }}" ntfy.sh/invader_alert
+          echo "${{ steps.extract_count.outputs.current_invaders }}" > invader_count.txt
+
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add invader_count.txt
+          git commit -m "Update invader count to ${{ steps.extract_count.outputs.current_invaders }}" || echo "No changes to commit"
+          git push || echo "No changes to push"
+
+      - name: Counts are the same
+        if: steps.extract_count.outputs.current_invaders == steps.read_previous_count.outputs.previous_invaders
+        run: |
+          echo "Invader count has not changed."
