@@ -16,21 +16,50 @@ jobs:
         id: fetch_content
         run: |
           content=$(curl -s https://www.space-invaders.com/world/)
-          echo "::set-output name=web_content::$content"
+          echo "web_content<<EOF" >> $GITHUB_OUTPUT
+          echo "$content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Extract invader count
         id: extract_count
         run: |
           web_content="${{ steps.fetch_content.outputs.web_content }}"
-          invader_text=$(echo "$web_content" | grep -oP '<div class="score">\s*<span>\s*\K[0-9,]+(?=\s*Invaders)' || true)
-          if [ -z "$invader_text" ]; then
-            echo "Invader count not found on page."
-            invader_count="error_not_found" # Special value to indicate not found
+          
+          # Pre-process the HTML: remove newlines, then squeeze multiple spaces into one
+          # Focus on the part of HTML that contains the score
+          score_section=$(echo "$web_content" | grep -o '<div class="score">.*Invaders.*</div>' || true)
+          
+          if [ -z "$score_section" ]; then
+            echo "Score section not found in the HTML."
+            invader_count="error_not_found"
           else
-            invader_count=$(echo "$invader_text" | sed 's/,//g')
+            # Remove newlines and carriage returns from the extracted section
+            processed_score_section=$(echo "$score_section" | tr -d '\n\r')
+            # Squeeze multiple spaces into single spaces
+            processed_score_section=$(echo "$processed_score_section" | tr -s ' ')
+
+            echo "Processed score section: $processed_score_section" # Debugging line
+
+            # Attempt to extract the number using a robust sed command
+            invader_text=$(echo "$processed_score_section" | sed -n 's/.*<div class="score"> *<span> *\([0-9,]*\) Invaders.*/\1/p')
+
+            if [ -z "$invader_text" ]; then
+              echo "Invader count not found with sed on processed section."
+              # Fallback: try grep on the processed section (similar to original but on cleaned HTML)
+              invader_text=$(echo "$processed_score_section" | grep -oP '<div class="score">\s*<span>\s*\K[0-9,]+(?=\s*Invaders)' || true)
+              if [ -z "$invader_text" ]; then
+                echo "Invader count not found with grep on processed section either."
+                invader_count="error_not_found"
+              else
+                invader_count=$(echo "$invader_text" | sed 's/,//g')
+              fi
+            else
+              invader_count=$(echo "$invader_text" | sed 's/,//g')
+            fi
           fi
-          echo "Current invader count: $invader_count"
-          echo "::set-output name=current_invaders::$invader_count"
+          
+          echo "Final extracted invader count: $invader_count"
+          echo "current_invaders=$invader_count" >> $GITHUB_OUTPUT
 
       - name: Read previous invader count
         id: read_previous_count
@@ -41,7 +70,7 @@ jobs:
             previous_invaders="0" # Default if file doesn't exist
           fi
           echo "Previous invader count: $previous_invaders"
-          echo "::set-output name=previous_invaders::$previous_invaders"
+          echo "previous_invaders=$previous_invaders" >> $GITHUB_OUTPUT
 
       - name: Compare counts and notify
         if: steps.extract_count.outputs.current_invaders != steps.read_previous_count.outputs.previous_invaders && steps.extract_count.outputs.current_invaders != 'error_not_found'
